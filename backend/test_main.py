@@ -1,0 +1,145 @@
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+import main
+from database import Base, get_db, init_db
+
+
+@pytest.fixture
+def client():
+    test_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSession = sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False)
+    init_db(test_engine)
+    def override_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+    main.app.dependency_overrides[get_db] = override_db
+    with TestClient(main.app) as test_client:
+        yield test_client
+    main.app.dependency_overrides.clear()
+    Base.metadata.drop_all(test_engine)
+    test_engine.dispose()
+
+
+def valuation(client, category="Academic Book", condition="Mint", price=1000, months=10, days=0, **extra):
+    return client.get("/api/valuate", params={"category": category, "condition": condition, "original_price": price, "months_used": months, "days_used": days, **extra})
+
+
+def test_category_rates_conditions_and_resale_floor(client):
+    assert valuation(client).json()["senior_resale_price"] == 400
+    assert valuation(client, condition="Good").json()["senior_resale_price"] == 360
+    assert valuation(client, condition="Worn").json()["senior_resale_price"] == 320
+    assert valuation(client, category="Hostel Appliance").json()["senior_resale_price"] == 600
+    assert valuation(client, category="Hostel Furniture").json()["senior_resale_price"] == 650
+    assert valuation(client, category="Hostel Appliance", price=1000, months=36, condition="Worn").json()["senior_resale_price"] == 250
+    assert valuation(client, condition="Excellent").status_code == 422
+
+
+def test_day_transfer_zero_micro_depreciation_and_floor(client):
+    assert valuation(client, days=0).json()["day_transfer_price"] == 1000
+    assert valuation(client, days=10).json()["day_transfer_price"] == 970
+    assert valuation(client, price=1000, days=90).json()["day_transfer_price"] == 730
+    assert valuation(client, price=1000, days=365).json()["day_transfer_price"] == 500
+
+
+def test_trust_formula_saturation_and_threshold_boundaries(client):
+    assert valuation(client, on_time_returns=2).json()["trust_score"] == 70
+    assert valuation(client, late_returns=2).json()["trust_score"] == 0
+    assert valuation(client, on_time_returns=20).json()["trust_score"] == 100
+    assert valuation(client, category="Academic Book").json()["trustlend_eligible"] is True
+    assert valuation(client, category="Hostel Appliance").json()["trustlend_eligible"] is False
+    assert valuation(client, category="Hostel Furniture", on_time_returns=4).json()["trustlend_eligible"] is True
+
+
+def test_qr_lifecycle_due_scores_unavailable_and_replay(client):
+    item = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    lender_id = item["owner_id"]
+    borrower_id = "student-a" if lender_id != "student-a" else "student-b"
+    requested = client.post("/api/trustlend/borrow", json={"item_id": item["id"], "borrower_id": borrower_id, "lender_id": lender_id})
+    assert requested.status_code == 201
+    token = requested.json()["token"]
+    assert len(token) >= 20
+    assert client.post("/api/trustlend/borrow", json={"item_id": item["id"], "borrower_id": borrower_id, "lender_id": lender_id}).status_code == 409
+    handover = client.post("/api/trustlend/handover", json={"token": token})
+    assert handover.json()["status"] == "active"
+    from datetime import datetime
+    due = datetime.fromisoformat(handover.json()["due_at"])
+    started = datetime.fromisoformat(handover.json()["started_at"])
+    assert (due - started).days == 7
+    assert client.post("/api/trustlend/handover", json={"token": token}).status_code == 409
+    returned = client.post("/api/trustlend/return", json={"token": token})
+    assert returned.status_code == 200
+    assert returned.json()["borrower_trust_score"] == 60
+    assert returned.json()["lender_trust_score"] == 55
+    assert client.post("/api/trustlend/return", json={"token": token}).status_code == 409
+    loans = client.get("/api/trustlend/loans", params={"student_id": borrower_id}).json()
+    assert loans[0]["role"] == "borrower" and "token" not in loans[0]
+
+
+def test_listing_filters_owner_names_and_isbn(client):
+    all_items = client.get("/api/items").json()
+    assert len(all_items) == 12
+    assert all_items[0]["owner_name"] == "Campus Student A"
+    assert all_items[0]["senior_resale_price"] > 0
+    filtered = client.get("/api/items", params={"category": "Academic Book", "mode": "Senior Resale", "hostel_block": "B"}).json()
+    assert len(filtered) == 1 and filtered[0]["title"] == "Scientific Calculator"
+    assert client.get("/api/isbn/9780131103627").json()["title"] == "Engineering Textbooks"
+    assert client.get("/api/isbn/missing").status_code == 404
+    assert client.post("/api/items", json={"title":"Invalid","owner_id":"student-a","category":"Academic Book","condition":"Fair","original_price":1,"months_used":0,"hostel_block":"A"}).status_code == 422
+
+
+def test_purchase_identity_amount_status_history_and_rejections(client):
+    item = next(row for row in client.get("/api/items").json() if row["mode"] == "Senior Resale")
+    buyer = "student-d" if item["owner_id"] != "student-d" else "student-c"
+    response = client.post("/api/purchases", json={"item_id": item["id"], "buyer_id": buyer})
+    assert response.status_code == 201
+    order = response.json()
+    assert order["buyer_id"] == buyer and order["seller_id"] == item["owner_id"]
+    assert order["amount"] == item["senior_resale_price"] and order["payment_status"] == "simulated"
+    assert client.get("/api/purchases", params={"student_id": buyer}).json()[0]["order_id"] == order["order_id"]
+    assert client.post("/api/purchases", json={"item_id": item["id"], "buyer_id": buyer}).status_code == 409
+    own = next(row for row in client.get("/api/items").json() if row["owner_id"] == "student-a" and row["available"])
+    assert client.post("/api/purchases", json={"item_id": own["id"], "buyer_id": "student-a"}).status_code == 400
+    free = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    assert client.post("/api/purchases", json={"item_id": free["id"], "buyer_id": "student-b"}).status_code == 400
+
+
+def test_dealer_names_bids_stage_labels_and_exact_allocations(client):
+    initial = client.get("/api/dealer-pool").json()
+    assert initial["stage"] == "pickup_scheduled"
+    assert initial["stage_label"] == "Hostel Pickup Scheduled"
+    items = client.get("/api/items").json()[:3]
+    for row in items:
+        assert client.post("/api/dealer-pool/add", json={"item_id": row["id"]}).status_code == 200
+    assert client.post("/api/dealer-pool/add", json={"item_id": items[0]["id"]}).status_code == 409
+    pooled = client.post("/api/dealer-pool/advance")
+    assert pooled.json()["stage"] == "pooled"
+    assert client.post("/api/dealer-pool/advance").status_code == 409
+    assert client.post("/api/dealer-pool/bid", json={"dealer_id":"dealer-green", "amount":3000}).status_code == 200
+    assert client.post("/api/dealer-pool/bid", json={"dealer_id":"dealer-campus", "amount":3000}).status_code == 400
+    client.post("/api/dealer-pool/bid", json={"dealer_id":"dealer-campus", "amount":3500})
+    state = client.get("/api/dealer-pool").json()
+    assert {bid["dealer_name"] for bid in state["bids"]} == {"Mysuru Book Syndicate", "Deccan Campus Wholesalers"}
+    assert state["estimate_ratio"] == 2.8
+    won = client.post("/api/dealer-pool/advance").json()
+    assert won["stage"] == "auction_won" and won["winner"]["dealer_id"] == "dealer-campus"
+    final = client.post("/api/dealer-pool/advance").json()
+    assert final["stage"] == "final" and sum(row["amount"] for row in final["payouts"]) == 3500
+    assert all(row["payment_status"] == "simulated" for row in final["payouts"])
+    assert client.get("/api/dealer-pool").json()["stage"] == "final"
+    assert client.post("/api/dealer-pool/advance").status_code == 409
+
+
+def test_health_metrics_counter_gauges_and_no_scrape_feedback(client):
+    assert client.get("/health").json()["status"] == "ok"
+    client.get("/api/items")
+    before = client.get("/metrics").text
+    assert "campusloop_http_requests_total" in before
+    assert "campusloop_active_borrows 0" in before
+    assert "campusloop_pooled_items 0" in before
+    assert client.get("/metrics").text == before
