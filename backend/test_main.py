@@ -153,3 +153,27 @@ def test_demo_student_roster_exposes_role_and_trust_fields(client):
     assert all(student["name"].startswith("Campus Student") for student in roster)
     assert all(student["trust_score"] == 50 for student in roster)
     assert all({"on_time_returns", "late_returns", "items_lent"} <= student.keys() for student in roster)
+
+
+def test_day_transfer_purchase_uses_micro_depreciation_and_seller_history(client):
+    listing = client.post("/api/items", json={
+        "title": "Day transfer history case",
+        "owner_id": "student-a",
+        "category": "Hostel Appliance",
+        "condition": "Good",
+        "original_price": 1000,
+        "months_used": 0,
+        "days_used": 10,
+        "hostel_block": "A",
+        "mode": "Day Transfer"
+    })
+    assert listing.status_code == 201
+    assert listing.json()["day_transfer_price"] == 970
+    purchase = client.post("/api/purchases", json={"item_id": listing.json()["id"], "buyer_id": "student-b"})
+    assert purchase.status_code == 201
+    assert purchase.json()["amount"] == 970
+    assert purchase.json()["seller_name"] == "Campus Student A"
+    seller_history = client.get("/api/purchases", params={"student_id": "student-a"}).json()
+    assert len(seller_history) == 1
+    assert seller_history[0]["order_id"] == purchase.json()["order_id"]
+    assert seller_history[0]["buyer_id"] == "student-b"
