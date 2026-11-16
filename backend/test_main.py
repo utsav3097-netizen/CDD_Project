@@ -374,3 +374,14 @@ def test_listing_accepts_exact_conditions_and_returns_computed_owner_values(clie
         assert item["owner_name"] == "Campus Student C"
         assert item["senior_resale_price"] == expected
         assert item["day_transfer_price"] == 1000
+
+
+def test_item_filters_are_exact_for_each_query_parameter(client):
+    for parameter, value, field in (
+        ("category", "Academic Book", "category"),
+        ("mode", "Day Transfer", "mode"),
+        ("hostel_block", "C", "hostel_block")
+    ):
+        rows = client.get("/api/items", params={parameter: value}).json()
+        assert rows
+        assert all(row[field] == value for row in rows)
