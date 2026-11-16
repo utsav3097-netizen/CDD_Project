@@ -36,8 +36,7 @@
         lite.setAttribute('aria-pressed', String(on));
         if (on && window.gsap) window.gsap.globalTimeline.pause();
         else if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) window.gsap.globalTimeline.resume();
-        if (on && state.lenis) state.lenis.stop();
-        else if (state.lenis && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) state.lenis.start();
+        state.homeMotionRefresh?.();
         updateBandwidth();
       });
     }
@@ -80,21 +79,151 @@
   async function loadAllItems() { const data = await api('/api/items'); state.items = normalizeList(data, 'items'); return state.items; }
   async function initHome() {
     const story = $('.section[aria-labelledby="story-title"]');
-    const cards = story ? $$('.card', story) : [];
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const lite = document.body.classList.contains('lite');
-    if (window.gsap && window.ScrollTrigger && cards.length && !reduced && !lite && innerWidth > 760) {
-      window.gsap.registerPlugin(window.ScrollTrigger);
-      const timeline = window.gsap.timeline({ scrollTrigger: { trigger: story, start: 'top top', end: '+=3200', pin: true, scrub: 1, invalidateOnRefresh: true } });
-      cards.forEach((card, index) => timeline.fromTo(card, { opacity: .25, y: 24 }, { opacity: 1, y: 0, duration: 1 }, index));
-      state.homeTimeline = timeline;
+    const grid = story?.querySelector('.grid');
+    const cards = grid ? [...grid.querySelectorAll('.card')] : [];
+    if (!story || cards.length !== 4) return;
+    const labels = ['Resale keeps value moving', 'Transfer for the next student', 'Borrow with trust', 'Pool for a stronger offer'];
+    let stageStatus = story.querySelector('.story-stage-status');
+    if (!stageStatus) {
+      stageStatus = document.createElement('p');
+      stageStatus.className = 'sr-only story-stage-status';
+      stageStatus.setAttribute('role', 'status');
+      stageStatus.setAttribute('aria-live', 'polite');
+      stageStatus.textContent = `Reuse story, 1 of 4: ${labels[0]}.`;
+      story.append(stageStatus);
     }
-    if (!reduced && !lite && innerWidth > 760) {
+    const sectionHead = story.querySelector('.section-head');
+    let illustration = story.querySelector('.loop-illustration');
+    if (!illustration && sectionHead) {
+      illustration = document.createElement('div');
+      illustration.className = 'loop-illustration';
+      illustration.setAttribute('aria-hidden', 'true');
+      illustration.innerHTML = `<svg class="loop-art" viewBox="0 0 340 190" focusable="false"><path class="loop-track" d="M170 20 C253 20 316 53 316 95 C316 137 253 170 170 170 C87 170 24 137 24 95 C24 53 87 20 170 20 Z"></path><path class="loop-track-progress" d="M170 20 C253 20 316 53 316 95 C316 137 253 170 170 170 C87 170 24 137 24 95 C24 53 87 20 170 20 Z"></path><circle class="loop-stop" cx="170" cy="20" r="7"></circle><circle class="loop-stop" cx="316" cy="95" r="7"></circle><circle class="loop-stop" cx="170" cy="170" r="7"></circle><circle class="loop-stop" cx="24" cy="95" r="7"></circle><g class="loop-object"><circle class="loop-object-halo" r="24"></circle><path class="loop-object-book" d="M-13 -15h10c4 0 6 2 6 5v24c-2-3-4-4-7-4h-9zM13 -15H3c-4 0-6 2-6 5v24c2-3 4-4 7-4h9z"></path><path class="loop-object-page" d="M0 -9v19"></path></g></svg><div class="loop-caption"><span class="loop-step">01 / 04</span><strong class="loop-label">${labels[0]}</strong></div>`;
+      sectionHead.append(illustration);
+    }
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const viewport = window.matchMedia('(min-width: 761px)');
+    const track = illustration?.querySelector('.loop-track-progress');
+    const object = illustration?.querySelector('.loop-object');
+    const step = illustration?.querySelector('.loop-step');
+    const label = illustration?.querySelector('.loop-label');
+    const stops = illustration ? [...illustration.querySelectorAll('.loop-stop')] : [];
+    const pathLength = track?.getTotalLength() || 0;
+    if (track && pathLength) {
+      track.style.strokeDasharray = String(pathLength);
+      track.style.strokeDashoffset = String(pathLength);
+    }
+    let activeStage = 0;
+    let timeline = null;
+    const reset = () => {
+      timeline?.scrollTrigger?.kill(true);
+      timeline?.kill();
+      timeline = null;
+      cards.forEach(card => {
+        card.removeAttribute('style');
+        card.classList.remove('story-current');
+      });
+      if (track && pathLength) track.style.strokeDashoffset = String(pathLength);
+      if (object && track) {
+        const point = track.getPointAtLength(0);
+        object.setAttribute('transform', `translate(${point.x} ${point.y})`);
+      }
+      if (step) step.textContent = '01 / 04';
+      if (label) label.textContent = labels[0];
+      activeStage = 0;
+      stageStatus.textContent = `Reuse story, 1 of 4: ${labels[0]}.`;
+      stops.forEach((stop, index) => {
+        stop.classList.toggle('active', index === 0);
+        stop.classList.remove('passed');
+      });
+    };
+    const run = () => {
+      if (!window.gsap || !window.ScrollTrigger || !viewport.matches || reduced.matches || document.body.classList.contains('lite') || !pathLength) return;
+      window.gsap.registerPlugin(window.ScrollTrigger);
+      const progress = { value: 0 };
+      const updateIllustration = () => {
+        const distance = progress.value * pathLength;
+        const point = track.getPointAtLength(distance);
+        object.setAttribute('transform', `translate(${point.x} ${point.y})`);
+        track.style.strokeDashoffset = String(pathLength - distance);
+        const active = Math.min(cards.length - 1, Math.floor(progress.value * cards.length));
+        if (step) step.textContent = `${String(active + 1).padStart(2, '0')} / 04`;
+        if (label) label.textContent = labels[active];
+        if (active !== activeStage) {
+          activeStage = active;
+          stageStatus.textContent = `Reuse story, ${active + 1} of 4: ${labels[active]}.`;
+        }
+        stops.forEach((stop, index) => {
+          stop.classList.toggle('active', index === active);
+          stop.classList.toggle('passed', index < active);
+        });
+        cards.forEach((card, index) => card.classList.toggle('story-current', index === active));
+      };
+      window.gsap.set(cards, { autoAlpha: .72, y: 10, scale: .99 });
+      window.gsap.set(cards[0], { autoAlpha: 1, y: 0, scale: 1 });
+      timeline = window.gsap.timeline({
+        scrollTrigger: { trigger: story, start: 'top top+=72', end: '+=2800', pin: true, scrub: 1, invalidateOnRefresh: true }
+      });
+      timeline.to(progress, { value: 1, duration: cards.length, ease: 'none', onUpdate: updateIllustration }, 0);
+      cards.forEach((card, index) => {
+        timeline.to(card, { autoAlpha: 1, y: 0, scale: 1.012, duration: .24, ease: 'none' }, index);
+        if (index < cards.length - 1) timeline.to(card, { autoAlpha: .72, scale: .99, duration: .2, ease: 'none' }, index + .82);
+      });
+      state.homeTimeline = timeline;
+      updateIllustration();
+    };
+    state.homeSyncLenis = () => {
+      if (!state.lenis) return;
+      const motionAllowed = viewport.matches && !reduced.matches && !document.body.classList.contains('lite') && !document.hidden;
+      if (motionAllowed) state.lenis.start();
+      else state.lenis.stop();
+    };
+    let lenisRequested = false;
+    const startLenis = () => {
+      if (state.lenis || !window.Lenis || !window.gsap || !window.ScrollTrigger || !viewport.matches || reduced.matches || document.body.classList.contains('lite')) return;
+      state.lenis = new window.Lenis({ autoRaf: false });
+      state.lenis.on('scroll', window.ScrollTrigger.update);
+      state.lenisTicker = time => state.lenis?.raf(time * 1000);
+      window.gsap.ticker.add(state.lenisTicker);
+      window.gsap.ticker.lagSmoothing(0);
+      state.homeSyncLenis();
+    };
+    const ensureLenis = () => {
+      if (!viewport.matches || reduced.matches || document.body.classList.contains('lite') || !window.gsap || !window.ScrollTrigger) return;
+      if (window.Lenis) {
+        startLenis();
+        return;
+      }
+      if (lenisRequested) return;
+      lenisRequested = true;
       const smoothScroll = document.createElement('script');
       smoothScroll.src = 'https://unpkg.com/lenis@1.1.20/dist/lenis.min.js';
-      smoothScroll.onload = () => { if (window.Lenis && !document.body.classList.contains('lite') && !window.matchMedia('(prefers-reduced-motion: reduce)').matches && innerWidth > 760) state.lenis = new window.Lenis({ autoRaf: true }); updateBandwidth(); };
+      smoothScroll.onload = () => {
+        startLenis();
+        updateBandwidth();
+      };
+      smoothScroll.onerror = () => {
+        lenisRequested = false;
+        updateBandwidth();
+      };
       document.head.append(smoothScroll);
-    }
+    };
+    state.homeMotionRefresh = () => {
+      reset();
+      run();
+      state.homeSyncLenis();
+      window.ScrollTrigger?.refresh();
+      ensureLenis();
+    };
+    viewport.addEventListener('change', state.homeMotionRefresh);
+    reduced.addEventListener('change', state.homeMotionRefresh);
+    document.addEventListener('visibilitychange', state.homeSyncLenis);
+    window.addEventListener('pagehide', () => state.lenis?.stop());
+    window.addEventListener('pageshow', state.homeSyncLenis);
+    state.homeMotionRefresh();
+    window.addEventListener('load', () => {
+      if (!window.gsap || !window.ScrollTrigger || reduced.matches || !viewport.matches || document.body.classList.contains('lite')) state.homeMotionRefresh();
+    }, { once: true });
   }
   let valuationTimer;
   async function updateValuation() {
