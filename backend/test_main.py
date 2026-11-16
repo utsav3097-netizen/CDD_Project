@@ -201,3 +201,19 @@ def test_lender_loan_history_includes_participants_without_qr_token(client):
     assert loan["status"] == "requested"
     assert "token" not in loan
     assert "token_expires_at" not in loan
+
+
+def test_trustlend_requires_free_listing_owner_and_distinct_borrower(client):
+    trust_item = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    other_lender = "student-a" if trust_item["owner_id"] != "student-a" else "student-b"
+    assert client.post("/api/trustlend/borrow", json={
+        "item_id": trust_item["id"], "borrower_id": "student-a", "lender_id": other_lender
+    }).status_code == 400
+    assert client.post("/api/trustlend/borrow", json={
+        "item_id": trust_item["id"], "borrower_id": trust_item["owner_id"], "lender_id": trust_item["owner_id"]
+    }).status_code == 400
+    sale_item = next(row for row in client.get("/api/items").json() if row["mode"] == "Senior Resale")
+    borrower = "student-d" if sale_item["owner_id"] != "student-d" else "student-c"
+    assert client.post("/api/trustlend/borrow", json={
+        "item_id": sale_item["id"], "borrower_id": borrower, "lender_id": sale_item["owner_id"]
+    }).status_code == 400
