@@ -177,3 +177,10 @@ def test_day_transfer_purchase_uses_micro_depreciation_and_seller_history(client
     assert len(seller_history) == 1
     assert seller_history[0]["order_id"] == purchase.json()["order_id"]
     assert seller_history[0]["buyer_id"] == "student-b"
+
+
+def test_purchase_unknown_student_and_item_ids_return_not_found(client):
+    item = next(row for row in client.get("/api/items").json() if row["mode"] == "Senior Resale")
+    assert client.post("/api/purchases", json={"item_id": item["id"], "buyer_id": "missing-student"}).status_code == 404
+    assert client.post("/api/purchases", json={"item_id": 9999, "buyer_id": "student-b"}).status_code == 404
+    assert client.get("/api/purchases", params={"student_id": "missing-student"}).status_code == 404
