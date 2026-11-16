@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 import main
-from database import Base, get_db, init_db
+from database import Base, get_db, init_db, Student, Item, Dealer, PoolBatch
 
 
 @pytest.fixture
@@ -278,3 +278,38 @@ def test_late_return_decrements_trust_and_persists_history(client, monkeypatch):
     history = client.get("/api/trustlend/loans", params={"student_id": "student-a"}).json()
     assert history[0]["status"] == "returned"
     assert history[0]["returned_at"] is not None
+
+
+def test_legacy_label_migration_preserves_existing_rows_and_is_idempotent():
+    test_engine = create_engine("sqlite://")
+    Base.metadata.create_all(test_engine)
+    TestingSession = sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False)
+    with TestingSession() as db:
+        db.add(Student(id="legacy-a", name="Legacy Resident", block="A"))
+        db.add(Dealer(id="dealer-green", name="GreenLoop Recyclers", verified=True))
+        db.add(PoolBatch(stage="bidding", active=True))
+        db.flush()
+        db.add(Item(
+            title="Saved legacy book",
+            category="Academic Book",
+            condition="Excellent",
+            original_price=800,
+            months_used=2,
+            owner_id="legacy-a",
+            hostel_block="A",
+            mode="Day Transfer",
+            days_used=4
+        ))
+        db.commit()
+    init_db(test_engine, seed=False)
+    init_db(test_engine, seed=False)
+    with TestingSession() as db:
+        item = db.query(Item).one()
+        assert item.title == "Saved legacy book"
+        assert item.condition == "Mint"
+        assert item.mode == "Day Transfer" and item.days_used == 4
+        assert db.query(Student).count() == 1
+        assert db.get(Dealer, "dealer-green").name == "Mysuru Book Syndicate"
+        assert db.query(PoolBatch).one().stage == "pooled"
+    Base.metadata.drop_all(test_engine)
+    test_engine.dispose()
