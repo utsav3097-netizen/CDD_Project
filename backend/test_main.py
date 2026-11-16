@@ -260,3 +260,21 @@ def test_expired_qr_token_cannot_handover(client, monkeypatch):
     response = client.post("/api/trustlend/handover", json={"token": request["token"]})
     assert response.status_code == 410
     assert response.json()["detail"] == "QR token has expired"
+
+
+def test_late_return_decrements_trust_and_persists_history(client, monkeypatch):
+    from datetime import timedelta
+
+    item = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    request = client.post("/api/trustlend/borrow", json={
+        "item_id": item["id"], "borrower_id": "student-a", "lender_id": item["owner_id"]
+    }).json()
+    client.post("/api/trustlend/handover", json={"token": request["token"]})
+    actual_now = main.utcnow
+    monkeypatch.setattr(main, "utcnow", lambda: actual_now() + timedelta(days=8))
+    returned = client.post("/api/trustlend/return", json={"token": request["token"]})
+    assert returned.json()["borrower_trust_score"] == 25
+    assert returned.json()["lender_trust_score"] == 55
+    history = client.get("/api/trustlend/loans", params={"student_id": "student-a"}).json()
+    assert history[0]["status"] == "returned"
+    assert history[0]["returned_at"] is not None
