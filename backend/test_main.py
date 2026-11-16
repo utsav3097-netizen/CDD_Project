@@ -333,3 +333,17 @@ def test_three_dealer_names_and_remainder_go_to_sorted_final_owner(client):
         "student-c": 2444
     }
     assert sum(row["amount"] for row in final["payouts"]) == 5000
+
+
+def test_unverified_dealer_cannot_bid_on_pooled_batch(client):
+    dependency = main.app.dependency_overrides[get_db]()
+    db = next(dependency)
+    db.add(Dealer(id="dealer-unverified", name="Unverified Dealer", verified=False))
+    db.commit()
+    dependency.close()
+    item = client.get("/api/items").json()[0]
+    client.post("/api/dealer-pool/add", json={"item_id": item["id"]})
+    assert client.post("/api/dealer-pool/advance").json()["stage"] == "pooled"
+    rejected = client.post("/api/dealer-pool/bid", json={"dealer_id": "dealer-unverified", "amount": 1000})
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "Dealer is not verified"
