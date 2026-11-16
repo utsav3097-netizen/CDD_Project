@@ -347,3 +347,9 @@ def test_unverified_dealer_cannot_bid_on_pooled_batch(client):
     rejected = client.post("/api/dealer-pool/bid", json={"dealer_id": "dealer-unverified", "amount": 1000})
     assert rejected.status_code == 403
     assert rejected.json()["detail"] == "Dealer is not verified"
+
+
+def test_block_leaderboard_breaks_equal_scores_alphabetically(client):
+    leaderboard = client.get("/api/leaderboard").json()["blocks"]
+    assert [row["block"] for row in leaderboard] == ["A", "B", "C", "D"]
+    assert all(row["trust_score"] == 50 and row["on_time_returns"] == 0 for row in leaderboard)
