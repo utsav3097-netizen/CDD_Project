@@ -313,3 +313,23 @@ def test_legacy_label_migration_preserves_existing_rows_and_is_idempotent():
         assert db.query(PoolBatch).one().stage == "pooled"
     Base.metadata.drop_all(test_engine)
     test_engine.dispose()
+
+
+def test_three_dealer_names_and_remainder_go_to_sorted_final_owner(client):
+    items = client.get("/api/items").json()
+    selected = [next(row for row in items if row["owner_id"] == owner) for owner in ("student-a", "student-b", "student-c")]
+    for item in selected:
+        client.post("/api/dealer-pool/add", json={"item_id": item["id"]})
+    assert client.post("/api/dealer-pool/advance").json()["stage"] == "pooled"
+    for dealer_id, amount in (("dealer-green", 4000), ("dealer-campus", 4500), ("dealer-reuse", 5000)):
+        assert client.post("/api/dealer-pool/bid", json={"dealer_id": dealer_id, "amount": amount}).status_code == 200
+    names = {bid["dealer_name"] for bid in client.get("/api/dealer-pool").json()["bids"]}
+    assert names == {"Mysuru Book Syndicate", "Deccan Campus Wholesalers", "Kaveri Recycling Corp"}
+    assert client.post("/api/dealer-pool/advance").json()["winner"]["dealer_id"] == "dealer-reuse"
+    final = client.post("/api/dealer-pool/advance").json()
+    assert {row["owner_id"]: row["amount"] for row in final["payouts"]} == {
+        "student-a": 689,
+        "student-b": 1867,
+        "student-c": 2444
+    }
+    assert sum(row["amount"] for row in final["payouts"]) == 5000
