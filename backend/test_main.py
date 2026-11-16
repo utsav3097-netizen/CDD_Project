@@ -353,3 +353,24 @@ def test_block_leaderboard_breaks_equal_scores_alphabetically(client):
     leaderboard = client.get("/api/leaderboard").json()["blocks"]
     assert [row["block"] for row in leaderboard] == ["A", "B", "C", "D"]
     assert all(row["trust_score"] == 50 and row["on_time_returns"] == 0 for row in leaderboard)
+
+
+def test_listing_accepts_exact_conditions_and_returns_computed_owner_values(client):
+    for condition, expected in (("Mint", 1000), ("Good", 900), ("Worn", 800)):
+        response = client.post("/api/items", json={
+            "title": f"Condition {condition}",
+            "owner_id": "student-c",
+            "category": "Academic Book",
+            "condition": condition,
+            "original_price": 1000,
+            "months_used": 0,
+            "days_used": 0,
+            "hostel_block": "C",
+            "mode": "Senior Resale"
+        })
+        assert response.status_code == 201
+        item = response.json()
+        assert item["condition"] == condition
+        assert item["owner_name"] == "Campus Student C"
+        assert item["senior_resale_price"] == expected
+        assert item["day_transfer_price"] == 1000
