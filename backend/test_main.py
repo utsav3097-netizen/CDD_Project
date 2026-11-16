@@ -217,3 +217,32 @@ def test_trustlend_requires_free_listing_owner_and_distinct_borrower(client):
     assert client.post("/api/trustlend/borrow", json={
         "item_id": sale_item["id"], "borrower_id": borrower, "lender_id": sale_item["owner_id"]
     }).status_code == 400
+
+
+def test_hostel_trustlend_threshold_uses_persisted_borrower_score(client):
+    listing = client.post("/api/items", json={
+        "title": "Threshold appliance",
+        "owner_id": "student-b",
+        "category": "Hostel Appliance",
+        "condition": "Good",
+        "original_price": 1200,
+        "months_used": 0,
+        "days_used": 0,
+        "hostel_block": "B",
+        "mode": "₹0 TrustLend"
+    }).json()
+    denied = client.post("/api/trustlend/borrow", json={
+        "item_id": listing["id"], "borrower_id": "student-a", "lender_id": "student-b"
+    })
+    assert denied.status_code == 403
+    book = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    for expected in (60, 70):
+        request = client.post("/api/trustlend/borrow", json={
+            "item_id": book["id"], "borrower_id": "student-a", "lender_id": book["owner_id"]
+        }).json()
+        client.post("/api/trustlend/handover", json={"token": request["token"]})
+        result = client.post("/api/trustlend/return", json={"token": request["token"]})
+        assert result.json()["borrower_trust_score"] == expected
+    assert client.post("/api/trustlend/borrow", json={
+        "item_id": listing["id"], "borrower_id": "student-a", "lender_id": "student-b"
+    }).status_code == 201
