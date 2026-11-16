@@ -143,3 +143,13 @@ def test_health_metrics_counter_gauges_and_no_scrape_feedback(client):
     assert "campusloop_active_borrows 0" in before
     assert "campusloop_pooled_items 0" in before
     assert client.get("/metrics").text == before
+
+
+def test_demo_student_roster_exposes_role_and_trust_fields(client):
+    roster = client.get("/api/students").json()
+    assert [(student["id"], student["block"]) for student in roster] == [
+        ("student-a", "A"), ("student-b", "B"), ("student-c", "C"), ("student-d", "D")
+    ]
+    assert all(student["name"].startswith("Campus Student") for student in roster)
+    assert all(student["trust_score"] == 50 for student in roster)
+    assert all({"on_time_returns", "late_returns", "items_lent"} <= student.keys() for student in roster)
