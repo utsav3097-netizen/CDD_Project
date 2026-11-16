@@ -14,6 +14,12 @@ This prototype has no authentication, identity provider, payment provider, or re
 4. **Support a calm, accessible interaction.** Use a warm off-white canvas, white cards, muted sage/teal accents, soft sand surfaces, readable dark text, and restrained coral warnings. Preserve semantic headings, labeled controls, keyboard focus, status announcements, readable contrast, reduced-motion support, and persistent Lite mode.
 5. **Keep personal agency.** Request camera access only after an explicit scan action. Offer a clearly named demo-scan action, never presented as a verified physical handoff.
 
+## Motion direction
+
+The home story takes inspiration from the [Floema sustainability scroll interaction](https://www.awwwards.com/inspiration/sustainability-scroll-interaction-floema), listed as scroll, WebGL, and illustration. Its sustainability narrative moves through product imagery and material chapters. CampusLoop translates that staged, illustrated storytelling into a light SVG reuse loop: one book icon follows a drawn path while the four reuse cards take focus. It uses no WebGL scene or external artwork.
+
+GSAP ScrollTrigger pins the four-card story on wide screens and scrubs the illustration and card focus with scroll progress. Lenis runs through the GSAP ticker only when the wide-screen animation is active. Narrow screens, Lite mode, and `prefers-reduced-motion` retain the complete unpinned story, stop optional smoothing, and show the static loop. The SVG uses current CampusLoop design tokens; no motion state communicates an API, identity, or payment result.
+
 ## UX frameworks
 
 ### Design Thinking: five phases
