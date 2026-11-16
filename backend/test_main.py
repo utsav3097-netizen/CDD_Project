@@ -396,3 +396,14 @@ def test_valuation_exposes_dealer_scrap_and_exact_hostel_threshold(client):
     assert at_boundary["trustlend_eligible"] is True
     assert at_boundary["dealer_pool_estimate"] == 518
     assert at_boundary["individual_scrap_estimate"] == 185
+
+
+def test_dealer_pool_guards_empty_batches_and_missing_bids(client):
+    assert client.get("/api/dealer-pool").json()["stage"] == "pickup_scheduled"
+    assert client.post("/api/dealer-pool/advance").status_code == 409
+    assert client.post("/api/dealer-pool/bid", json={"dealer_id": "dealer-green", "amount": 1000}).status_code == 409
+    item = client.get("/api/items").json()[0]
+    client.post("/api/dealer-pool/add", json={"item_id": item["id"]})
+    assert client.post("/api/dealer-pool/advance").json()["stage"] == "pooled"
+    assert client.post("/api/dealer-pool/advance").status_code == 409
+    assert client.get("/api/dealer-pool").json()["stage"] == "pooled"
