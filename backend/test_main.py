@@ -246,3 +246,17 @@ def test_hostel_trustlend_threshold_uses_persisted_borrower_score(client):
     assert client.post("/api/trustlend/borrow", json={
         "item_id": listing["id"], "borrower_id": "student-a", "lender_id": "student-b"
     }).status_code == 201
+
+
+def test_expired_qr_token_cannot_handover(client, monkeypatch):
+    from datetime import timedelta
+
+    item = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    request = client.post("/api/trustlend/borrow", json={
+        "item_id": item["id"], "borrower_id": "student-a", "lender_id": item["owner_id"]
+    }).json()
+    actual_now = main.utcnow
+    monkeypatch.setattr(main, "utcnow", lambda: actual_now() + timedelta(hours=25))
+    response = client.post("/api/trustlend/handover", json={"token": request["token"]})
+    assert response.status_code == 410
+    assert response.json()["detail"] == "QR token has expired"
