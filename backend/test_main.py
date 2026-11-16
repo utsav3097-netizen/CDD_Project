@@ -184,3 +184,20 @@ def test_purchase_unknown_student_and_item_ids_return_not_found(client):
     assert client.post("/api/purchases", json={"item_id": item["id"], "buyer_id": "missing-student"}).status_code == 404
     assert client.post("/api/purchases", json={"item_id": 9999, "buyer_id": "student-b"}).status_code == 404
     assert client.get("/api/purchases", params={"student_id": "missing-student"}).status_code == 404
+
+
+def test_lender_loan_history_includes_participants_without_qr_token(client):
+    item = next(row for row in client.get("/api/items").json() if row["mode"] == "₹0 TrustLend")
+    requested = client.post("/api/trustlend/borrow", json={
+        "item_id": item["id"], "borrower_id": "student-a", "lender_id": item["owner_id"]
+    })
+    assert requested.status_code == 201
+    lender_history = client.get("/api/trustlend/loans", params={"student_id": item["owner_id"]}).json()
+    assert len(lender_history) == 1
+    loan = lender_history[0]
+    assert loan["role"] == "lender"
+    assert loan["borrower_name"] == "Campus Student A"
+    assert loan["lender_name"] == item["owner_name"]
+    assert loan["status"] == "requested"
+    assert "token" not in loan
+    assert "token_expires_at" not in loan
