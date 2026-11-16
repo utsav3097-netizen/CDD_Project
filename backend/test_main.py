@@ -385,3 +385,14 @@ def test_item_filters_are_exact_for_each_query_parameter(client):
         rows = client.get("/api/items", params={parameter: value}).json()
         assert rows
         assert all(row[field] == value for row in rows)
+
+
+def test_valuation_exposes_dealer_scrap_and_exact_hostel_threshold(client):
+    below = valuation(client, category="Hostel Appliance", price=1234, months=0, on_time_returns=1).json()
+    at_boundary = valuation(client, category="Hostel Furniture", price=1234, months=0, on_time_returns=1, items_lent=1).json()
+    assert below["trust_score"] == 60
+    assert below["trustlend_threshold"] == 65 and below["trustlend_eligible"] is False
+    assert at_boundary["trust_score"] == 65
+    assert at_boundary["trustlend_eligible"] is True
+    assert at_boundary["dealer_pool_estimate"] == 518
+    assert at_boundary["individual_scrap_estimate"] == 185
